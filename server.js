@@ -35,7 +35,7 @@ io.on("connection", (socket) => {
     players[socket.id].score = playerData.score;
     players[socket.id].scaleX = playerData.scaleX;
     players[socket.id].scaleY = playerData.scaleY;
-
+    players[socket.id].action = playerData.action;
     // Enviar a atualização para todos os outros clientes
     socket.broadcast.emit("playerUpdate", players[socket.id]);
   });

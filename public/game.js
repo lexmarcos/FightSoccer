@@ -1,5 +1,3 @@
-// game.js
-
 const config = {
   type: Phaser.AUTO,
   width: 800,
@@ -8,7 +6,7 @@ const config = {
     default: "arcade",
     arcade: {
       gravity: { y: 600 },
-      debug: false,
+      debug: true,
     },
   },
   scene: {
@@ -22,65 +20,241 @@ let socket;
 let localPlayer;
 let remotePlayer;
 let ground;
+let ball;
 
 const game = new Phaser.Game(config);
 
+function getDistance(x1, y1, x2, y2) {
+  const dx = x1 - x2;
+  const dy = y1 - y2;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function applyForceToBall(ball, player) {
+  const force = 500;
+  const direction = player.flipX ? -1 : 1;
+  ball.setVelocityX(direction * force);
+  ball.setVelocityY(-force);
+}
+
+// Funções auxiliares
 function addPlayer(self, playerInfo, x, y, playerNumber) {
-  console.log("Player added", playerInfo);
   const newPlayer = self.physics.add.sprite(x, y, "playerSpritesheet" + playerNumber);
-  console.log(newPlayer);
   newPlayer.id = playerInfo[0];
-  newPlayer.anims.play("playerWalk" + playerNumber, true);
+  newPlayer.targetX = x;
+  newPlayer.targetY = y;
+  newPlayer.body.setSize(22, 30);
+  newPlayer.body.setOffset(13, 10);
+  newPlayer.setCollideWorldBounds(true);
+  if (playerNumber === 1) {
+    newPlayer.anims.play("idleAnimationBlue", true);
+  } else {
+    newPlayer.anims.play("idleAnimationRed", true);
+  }
   self.physics.add.collider(newPlayer, ground);
   return newPlayer;
 }
 
+function isPlayerMoving(player) {
+  return player.body.velocity.x !== 0 || player.body.velocity.y !== 0;
+}
+
+function jumpAnimation(player, type) {
+  if (!player.body.touching.down) return;
+  player.action = "jump";
+  player.anims.play("jumpAnimation" + type, true);
+}
+
+function walkAnimation(player, type) {
+  if (!player.body.touching.down) return;
+  player.action = "walk";
+  player.anims.play("walkAnimation" + type, true);
+}
+
+function idleAnimation(player, type, ignoreIfPunching = true) {
+  if (isPlayerMoving(player) && !ignoreIfPunching) return;
+  player.action = "idle";
+  player.anims.play("idleAnimation" + type, true);
+}
+
+function isPlayerMovingY(player) {
+  return player.body.velocity.y !== 0;
+}
+
+function runAnimation(player, type) {
+  if (!player.body.touching.down) return;
+  player.action = "run";
+  player.anims.play("runAnimation" + type, true);
+}
+
+function handlePlayerInput(player, keys, input) {
+  const isRunning = keys.Shift.isDown;
+  const speed = isRunning && player.body.touching.down ? 150 : 50;
+
+  if (player.action === "punch") {
+    if (player.body.touching.down) {
+      player.setVelocityX(0);
+    }
+    return;
+  }
+
+  if (!isPlayerMoving(player)) {
+    idleAnimation(player, "Blue");
+  }
+
+  if (keys.A.isDown) {
+    if (isRunning) {
+      runAnimation(player, "Blue");
+    } else {
+      walkAnimation(player, "Blue");
+    }
+    player.setVelocityX(-speed);
+    player.setFlipX(true);
+  } else if (keys.D.isDown) {
+    if (isRunning) {
+      runAnimation(player, "Blue");
+    } else {
+      walkAnimation(player, "Blue");
+    }
+    player.setVelocityX(speed);
+    player.setFlipX(false);
+  } else {
+    player.setVelocityX(0);
+  }
+
+  input.on("pointerdown", (pointer) => {
+    if (pointer.leftButtonDown()) {
+      punchAnimation(localPlayer, "Blue");
+    }
+  });
+
+  if (keys.W.isDown && player.body.touching.down) {
+    player.setVelocityY(-330);
+    jumpAnimation(player, "Blue");
+  }
+}
+function createPlayerAnimations(scene, spritesheetKey, animKey, start, end, frameRate, repeat) {
+  scene.anims.create({
+    key: animKey,
+    frames: scene.anims.generateFrameNumbers(spritesheetKey, {
+      start: start,
+      end: end,
+    }),
+    frameRate: frameRate,
+    repeat: repeat,
+  });
+}
+
+function loadSpritesheet(
+  scene,
+  spritesheetKey,
+  spritesheetPath,
+  frameWidth = 48,
+  frameHeight = 48
+) {
+  scene.load.spritesheet(spritesheetKey, spritesheetPath, {
+    frameWidth: frameWidth, // Largura de cada quadro (frame) na spritesheet
+    frameHeight: frameHeight, // Altura de cada quadro (frame) na spritesheet
+  });
+}
+
+// Funções do Phaser
 function preload() {
   // Carregar imagens e sprites
-  this.load.spritesheet("playerSpritesheet1", "assets/Player Punch/Player Punch 1 64x64.png", {
-    frameWidth: 64, // Largura de cada quadro (frame) na spritesheet
-    frameHeight: 48, // Altura de cada quadro (frame) na spritesheet
+  loadSpritesheet(this, "idleSpriteSheetBlue", "assets/Player Idle/Character Idle blue.png");
+  loadSpritesheet(this, "idleSpriteSheetRed", "assets/Player Idle/Character Idle red.png");
+  loadSpritesheet(this, "walkSpriteSheetBlue", "assets/PlayerWalk/PlayerWalk blue.png");
+  loadSpritesheet(this, "walkSpriteSheetRed", "assets/PlayerWalk/PlayerWalk red.png");
+  loadSpritesheet(this, "jumpSpriteSheetBlue", "assets/Player Jump/player jump blue.png");
+  loadSpritesheet(this, "jumpSpriteSheetRed", "assets/Player Jump/player jump red.png");
+  loadSpritesheet(this, "runSpriteSheetBlue", "assets/Player Run/run cycle blue.png");
+  loadSpritesheet(this, "runSpriteSheetRed", "assets/Player Run/run cycle red.png");
+  loadSpritesheet(
+    this,
+    "punchSpriteSheetBlue",
+    "assets/Player Punch/Player Punch blue.png",
+    64,
+    48
+  );
+  loadSpritesheet(this, "punchSpriteSheetRed", "assets/Player Punch/Player Punch red.png", 64, 48);
+  loadSpritesheet(this, "ball", "assets/Ball/Ball.png", 32, 32);
+}
+
+const animationByAction = {
+  idle: idleAnimation,
+  walk: walkAnimation,
+  jump: jumpAnimation,
+  run: runAnimation,
+  punch: punchAnimation,
+};
+
+function punchAnimation(player, type) {
+  if (player.action === "punch") return;
+
+  player.action = "punch";
+  player.anims.stop();
+  if (player.flipX) {
+    player.body.setOffset(10, 9);
+  } else {
+    player.body.setOffset(30, 9);
+  }
+
+  player.anims.play("punchAnimation" + type, true);
+  player.once("animationcomplete", () => {
+    player.body.setOffset(13, 9);
+    idleAnimation(player, type, true);
   });
-  this.load.spritesheet("playerSpritesheet2", "assets/Player Punch/Player Punch 2 64x64.png", {
-    frameWidth: 64, // Largura de cada quadro (frame) na spritesheet
-    frameHeight: 48, // Altura de cada quadro (frame) na spritesheet
-  });
+
+  // Verificar se a bola está próxima do personagem
+  const distance = getDistance(player.x, player.y, ball.x, ball.y);
+  const maxDistance = 40; // Ajuste este valor de acordo com o tamanho e a posição do soco
+
+  if (distance <= maxDistance) {
+    setTimeout(() => {
+      applyForceToBall(ball, player);
+    }, 400);
+  }
 }
 
 function create() {
   socket = io();
-  // Criar e posicionar elementos do jogo
+
+  ball = this.physics.add.sprite(400, 566, "ball");
+  ball.setBounce(0.9);
+  ball.setCollideWorldBounds(true);
+
+  this.physics.add.collider(ball, ground);
+  this.physics.add.collider(ball, localPlayer);
+  if (remotePlayer) {
+    this.physics.add.collider(ball, remotePlayer);
+  }
 
   // Criar um retângulo como chão e habilitar a física do Arcade
-  ground = this.add.rectangle(400, 600, 800, 20, 0x00ff00);
+  ground = this.add.rectangle(400, 600, 800, 1, 0x000000);
   this.physics.add.existing(ground, true); // O segundo argumento 'true' torna o chão estático
 
-  this.anims.create({
-    key: "playerWalk1", // Nome da animação
-    frames: this.anims.generateFrameNumbers("playerSpritesheet1", {
-      start: 0, // Índice do primeiro quadro (frame) da animação
-      end: 7, // Índice do último quadro (frame) da animação
-    }),
-    frameRate: 8, // Quantidade de quadros (frames) por segundo
-    repeat: -1, // Quantidade de vezes que a animação deve se repetir (-1 para repetir indefinidamente)
-  });
+  createPlayerAnimations(this, "idleSpriteSheetBlue", "idleAnimationBlue", 0, 9, 10, -1);
+  createPlayerAnimations(this, "idleSpriteSheetRed", "idleAnimationRed", 0, 9, 10, -1);
+  createPlayerAnimations(this, "jumpSpriteSheetBlue", "jumpAnimationBlue", 0, 2, 3);
+  createPlayerAnimations(this, "jumpSpriteSheetRed", "jumpAnimationRed", 0, 2, 3);
+  createPlayerAnimations(this, "walkSpriteSheetBlue", "walkAnimationBlue", 0, 7, 8);
+  createPlayerAnimations(this, "walkSpriteSheetRed", "walkAnimationRed", 0, 7, 8);
+  createPlayerAnimations(this, "runSpriteSheetBlue", "runAnimationBlue", 0, 7, 8);
+  createPlayerAnimations(this, "runSpriteSheetRed", "runAnimationRed", 0, 7, 8);
+  createPlayerAnimations(this, "punchSpriteSheetBlue", "punchAnimationBlue", 0, 7, 8);
+  createPlayerAnimations(this, "punchSpriteSheetRed", "punchAnimationRed", 0, 7, 8);
 
-  this.anims.create({
-    key: "playerWalk2", // Nome da animação
-    frames: this.anims.generateFrameNumbers("playerSpritesheet2", {
-      start: 0, // Índice do primeiro quadro (frame) da animação
-      end: 7, // Índice do último quadro (frame) da animação
-    }),
-    frameRate: 8, // Quantidade de quadros (frames) por segundo
-    repeat: -1, // Quantidade de vezes que a animação deve se repetir (-1 para repetir indefinidamente)
-  });
-
+  // Configurar eventos de socket
   socket.on("currentPlayers", (players) => {
     console.log("currentPlayers", players);
     const playerEntries = Object.entries(players);
     localPlayer = addPlayer(this, playerEntries[0], 50, 566, 1);
+    this.physics.add.collider(ball, localPlayer);
+    // showHitbox(localPlayer, this);
     if (playerEntries[1]) {
       remotePlayer = addPlayer(this, playerEntries[1], 750, 566, 2);
+      this.physics.add.collider(ball, remotePlayer);
+      // showHitbox(remotePlayer, this);
     }
   });
 
@@ -88,6 +262,8 @@ function create() {
     console.log("newPlayer", playerInfo);
     const playerEntries = Object.entries(playerInfo);
     remotePlayer = addPlayer(this, playerEntries[0], 750, 566, 2);
+    this.physics.add.collider(ball, remotePlayer);
+    // showHitbox(remotePlayer, this);
   });
 
   socket.on("playerDisconnected", (playerId) => {
@@ -99,12 +275,17 @@ function create() {
   });
 
   socket.on("playerUpdate", (playerInfo) => {
-    console.log(playerInfo.scaleX, playerInfo.scaleY);
-    if ((remotePlayer && remotePlayer.x !== playerInfo.x) || remotePlayer.y !== playerInfo.y) {
+    console.log(playerInfo.action);
+    animationByAction[playerInfo.action](remotePlayer, "Red");
+    if (
+      (remotePlayer && remotePlayer.x !== playerInfo.x) ||
+      (remotePlayer.y !== playerInfo.y && remotePlayer.action !== playerInfo.action)
+    ) {
       remotePlayer.x = playerInfo.x;
       remotePlayer.y = playerInfo.y;
       remotePlayer.scaleX = playerInfo.scaleX;
       remotePlayer.scaleY = playerInfo.scaleY;
+      remotePlayer.action = playerInfo.action;
     }
   });
 
@@ -113,40 +294,52 @@ function create() {
   this.A = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
   this.S = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S);
   this.D = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
+  this.Shift = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
+}
+
+function showHitbox(player, scene) {
+  console.log(player.body.width, player.body.height);
+  const hitbox = scene.add.rectangle(0, 0, player.body.width, player.body.height, 0xff0000, 0.5);
+  hitbox.setStrokeStyle(2, 0xffffff);
+  hitbox.setOrigin(0, 0);
+  player.hitbox = hitbox;
 }
 
 function update() {
   if (localPlayer) {
-    const speed = 200; // Velocidade de movimentação do jogador
+    handlePlayerInput(
+      localPlayer,
+      {
+        W: this.W,
+        A: this.A,
+        S: this.S,
+        D: this.D,
+        Shift: this.Shift,
+      },
+      this.input
+    );
+    const playerChanged =
+      localPlayer.oldX !== localPlayer.x ||
+      localPlayer.oldY !== localPlayer.y ||
+      localPlayer.oldScaleX !== localPlayer.scaleX ||
+      localPlayer.oldScaleY !== localPlayer.scaleY ||
+      localPlayer.oldAction !== localPlayer.action;
+    if (playerChanged) {
+      socket.emit("playerUpdate", {
+        x: localPlayer.x,
+        y: localPlayer.y,
+        score: localPlayer.score,
+        scaleX: localPlayer.scaleX,
+        scaleY: localPlayer.scaleY,
+        action: localPlayer.action,
+      });
 
-    if (this.A.isDown) {
-      // Mover o jogador para a esquerda
-      localPlayer.setVelocityX(-speed);
-      // Inverter o sprite horizontalmente
-      localPlayer.setScale(-1, 1);
-    } else if (this.D.isDown) {
-      // Mover o jogador para a direita
-      localPlayer.setVelocityX(speed);
-      // Restaurar a escala original do sprite
-      localPlayer.setScale(1, 1);
-    } else {
-      // Parar o movimento horizontal do jogador
-      localPlayer.setVelocityX(0);
+      localPlayer.oldX = localPlayer.x;
+      localPlayer.oldY = localPlayer.y;
+      localPlayer.oldScaleX = localPlayer.scaleX;
+      localPlayer.oldScaleY = localPlayer.scaleY;
+      localPlayer.oldAction = localPlayer.action;
     }
-
-    if (this.W.isDown && localPlayer.body.touching.down) {
-      // Fazer o jogador pular (apenas se estiver tocando o chão)
-      localPlayer.setVelocityY(-330);
-    }
-
-    // Atualizar a lógica do jogo
-    // Enviar dados do jogador para o servidor
-    socket.emit("playerUpdate", {
-      x: localPlayer.x,
-      y: localPlayer.y,
-      score: localPlayer.score,
-      scaleY: localPlayer.scaleY,
-      scaleX: localPlayer.scaleX,
-    });
+    // localPlayer.hitbox.setPosition(localPlayer.body.position.x, localPlayer.body.position.y);
   }
 }
