@@ -30,13 +30,24 @@ function getDistance(x1, y1, x2, y2) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
+function sendBallData() {
+  console.log("txhama");
+  // Enviar informações da bola atualizadas para o servidor
+  socket.emit("ballUpdate", {
+    x: ball.x,
+    y: ball.y,
+    velocityX: ball.body.velocity.x,
+    velocityY: ball.body.velocity.y,
+  });
+}
+
 function applyForceToBall(ball, player) {
   const force = 500;
   const direction = player.flipX ? -1 : 1;
   ball.setVelocityX(direction * force);
   ball.setVelocityY(-force);
+  sendBallData();
 }
-
 // Funções auxiliares
 function addPlayer(self, playerInfo, x, y, playerNumber) {
   const newPlayer = self.physics.add.sprite(x, y, "playerSpritesheet" + playerNumber);
@@ -45,7 +56,7 @@ function addPlayer(self, playerInfo, x, y, playerNumber) {
   newPlayer.targetY = y;
   newPlayer.body.setSize(22, 30);
   newPlayer.body.setOffset(13, 10);
-  newPlayer.setCollideWorldBounds(true);
+  newPlayer.setImmovable(true);
   if (playerNumber === 1) {
     newPlayer.anims.play("idleAnimationBlue", true);
   } else {
@@ -218,17 +229,7 @@ function punchAnimation(player, type) {
 
 function create() {
   socket = io();
-
-  ball = this.physics.add.sprite(400, 566, "ball");
-  ball.setBounce(0.9);
-  ball.setCollideWorldBounds(true);
-
-  this.physics.add.collider(ball, ground);
-  this.physics.add.collider(ball, localPlayer);
-  if (remotePlayer) {
-    this.physics.add.collider(ball, remotePlayer);
-  }
-
+  const playersGroup = this.physics.add.group({ collideWorldBounds: true });
   // Criar um retângulo como chão e habilitar a física do Arcade
   ground = this.add.rectangle(400, 600, 800, 1, 0x000000);
   this.physics.add.existing(ground, true); // O segundo argumento 'true' torna o chão estático
@@ -249,10 +250,12 @@ function create() {
     console.log("currentPlayers", players);
     const playerEntries = Object.entries(players);
     localPlayer = addPlayer(this, playerEntries[0], 50, 566, 1);
+    playersGroup.add(localPlayer);
     this.physics.add.collider(ball, localPlayer);
     // showHitbox(localPlayer, this);
     if (playerEntries[1]) {
       remotePlayer = addPlayer(this, playerEntries[1], 750, 566, 2);
+      playersGroup.add(remotePlayer);
       this.physics.add.collider(ball, remotePlayer);
       // showHitbox(remotePlayer, this);
     }
@@ -262,6 +265,7 @@ function create() {
     console.log("newPlayer", playerInfo);
     const playerEntries = Object.entries(playerInfo);
     remotePlayer = addPlayer(this, playerEntries[0], 750, 566, 2);
+    playersGroup.add(remotePlayer);
     this.physics.add.collider(ball, remotePlayer);
     // showHitbox(remotePlayer, this);
   });
@@ -275,8 +279,9 @@ function create() {
   });
 
   socket.on("playerUpdate", (playerInfo) => {
-    console.log(playerInfo.action);
-    animationByAction[playerInfo.action](remotePlayer, "Red");
+    if (playerInfo.action) {
+      animationByAction[playerInfo.action](remotePlayer, "Red");
+    }
     if (
       (remotePlayer && remotePlayer.x !== playerInfo.x) ||
       (remotePlayer.y !== playerInfo.y && remotePlayer.action !== playerInfo.action)
@@ -288,6 +293,23 @@ function create() {
       remotePlayer.action = playerInfo.action;
     }
   });
+
+  // Dentro da função `create` do lado do cliente
+  socket.on("ballUpdate", (ballData) => {
+    if (ballData.id === socket.id) return;
+    ball.setPosition(ballData.x, ballData.y);
+    ball.setVelocity(ballData.velocityX, ballData.velocityY);
+  });
+
+  ball = this.physics.add.sprite(400, 566, "ball");
+  ball.setBounce(0.6);
+  ball.setCollideWorldBounds(true);
+  playersGroup.children.iterate(function (player) {
+    console.log(player);
+    player.setCollideWorldBounds(true);
+  });
+  this.physics.add.collider(ball, ground);
+  this.physics.add.collider(ball, playersGroup, sendBallData, null, this);
 
   // Adicionar teclas WASD
   this.W = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
@@ -304,7 +326,7 @@ function showHitbox(player, scene) {
   hitbox.setOrigin(0, 0);
   player.hitbox = hitbox;
 }
-
+let isColliding = false;
 function update() {
   if (localPlayer) {
     handlePlayerInput(
@@ -340,6 +362,5 @@ function update() {
       localPlayer.oldScaleY = localPlayer.scaleY;
       localPlayer.oldAction = localPlayer.action;
     }
-    // localPlayer.hitbox.setPosition(localPlayer.body.position.x, localPlayer.body.position.y);
   }
 }

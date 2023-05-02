@@ -28,6 +28,11 @@ io.on("connection", (socket) => {
   // Informar aos outros clientes que um novo jogador se conectou
   socket.broadcast.emit("newPlayer", { [socket.id]: players[socket.id] });
 
+  // No lado do servidor (Node.js)
+  socket.on("ballUpdate", (ballData) => {
+    socket.broadcast.emit("ballUpdate", { ...ballData, id: socket.id });
+  });
+
   // Atualizar os dados dos jogadores quando um cliente enviar novas informações
   socket.on("playerUpdate", (playerData) => {
     players[socket.id].x = playerData.x;
